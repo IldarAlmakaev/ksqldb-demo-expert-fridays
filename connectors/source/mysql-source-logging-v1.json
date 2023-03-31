@@ -1,0 +1,53 @@
+{
+  "connector.class": "io.debezium.connector.mysql.MySqlConnector",
+  "database.hostname": "${file:/config.properties:db.hostname}",
+  "database.port": "3306",
+  "database.user": "${file:/config.properties:db.username}",
+  "database.password": "${file:/config.properties:db.password}",
+  "database.jdbc.driver": "com.mysql.jdbc.Driver",
+  "snapshot.mode": "when_needed",
+  "snapshot.locking.mode": "none",
+  "database.server.name": "${file:/config.properties:db.server-name}",
+  "database.ssl.mode": "${file:/config.properties:db.ssl-mode}",
+  "tasks.max": "1",
+  "database.include.list": "logging",
+  "table.include.list": "logging.clicks",
+
+  "database.history.store.only.monitored.tables.ddl": "true",
+  "database.history.kafka.bootstrap.servers": "${file:/config.properties:kafka.bootstrap-servers}",
+  "database.history.kafka.topic": "schema-changes.logging",
+  "include.schema.changes": "false",
+  "connect.timeout.ms": "45000",
+
+  "transforms": "unwrap,dropTopicPrefix",
+
+  "transforms.unwrap.drop.tombstones": true,
+  "transforms.unwrap.delete.handling.mode": "rewrite",
+  "transforms.unwrap.add.fields": "op,table",
+  "transforms.unwrap.type": "io.debezium.transforms.ExtractNewRecordState",
+
+  "transforms.dropTopicPrefix.type": "org.apache.kafka.connect.transforms.RegexRouter",
+  "transforms.dropTopicPrefix.regex": "${file:/config.properties:db.server-name}.(.*)",
+  "transforms.dropTopicPrefix.replacement": "$1",
+
+  "key.converter": "io.confluent.connect.avro.AvroConverter",
+  "key.converter.schema.registry.url": "${file:/config.properties:schema-registry}",
+
+  "value.converter": "io.confluent.connect.avro.AvroConverter",
+  "value.converter.schema.registry.url": "${file:/config.properties:schema-registry}",
+
+  "topic.creation.default.replication.factor": "${file:/config.properties:kafka.topic-repl-factor}",
+  "topic.creation.default.partitions": "${file:/config.properties:kafka.topic-partitions}",
+  "topic.creation.default.max.message.bytes": "${file:/config.properties:topic-max-message-bytes}",
+  "max.message.bytes": "${file:/config.properties:topic-max-message-bytes}",
+  "errors.retry.timeout": 600000,
+  "errors.retry.delay.max.ms": 30000,
+
+  "snapshot.select.statement.overrides": "logging.clicks",
+  "snapshot.select.statement.overrides.logging.clicks": "SELECT * FROM logging.clicks WHERE insertDate >= NOW() - INTERVAL 1 YEAR",
+
+  "topic.creation.groups": "logging_clicks,",
+  "topic.creation.logging_clicks.include": "logging.clicks",
+  "topic.creation.logging_clicks.replication.factor": "1",
+  "topic.creation.logging_clicks.partitions": "10"
+}

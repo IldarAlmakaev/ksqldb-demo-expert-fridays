@@ -1,0 +1,162 @@
+version: '3'
+
+services:
+  zookeeper:
+    container_name: zookeeper
+    image: confluentinc/cp-zookeeper:${CONFLUENT_VERSION}
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+  kafka:
+    container_name: kafka
+    image: confluentinc/cp-kafka:${CONFLUENT_VERSION}
+    depends_on:
+      - zookeeper
+    ports:
+      - "9093:9093"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,PLAINTEXT://0.0.0.0:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,PLAINTEXT://localhost:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_REPLICA_FETCH_MAX_BYTES: 3145728
+      KAFKA_PRODUCER_MAX_REQUEST_SIZE: 3145728
+      KAFKA_CONSUMER_MAX_PARTITION_FETCH_BYTES: 3145728
+      JMX_PORT: 9997
+      KAFKA_JMX_OPTS: -Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false -Djava.rmi.server.hostname=kafka -Dcom.sun.management.jmxremote.rmi.port=9997
+
+  schema-registry:
+    container_name: schema-registry
+    image: confluentinc/cp-schema-registry:${CONFLUENT_VERSION}
+    depends_on:
+      - kafka
+    ports:
+      - "18081:8081"
+    environment:
+      SCHEMA_REGISTRY_SCHEMA_REGISTRY_GROUP_ID: 'local-schema-registry'
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka:9092
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_TOPIC: '_schemas_local'
+
+  mysql:
+    container_name: mysql
+    build:
+      context: ./docker/mysql
+      args:
+        image: mariadb:10.6.4
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_DATABASE: 'demo'
+      MYSQL_USER: 'demo-user'
+      MYSQL_PASSWORD: '12345'
+      MYSQL_ROOT_PASSWORD: '12345'
+
+  kafka-connect:
+    container_name: kafka-connect
+    build:
+      context: ./docker/kafka-connect
+      args:
+        image: confluentinc/cp-kafka-connect:${CONFLUENT_VERSION}
+    depends_on:
+      - kafka
+      - schema-registry
+    ports:
+      - "8083:8083"
+    volumes:
+      - ./connectors/config.properties:/config.properties
+    environment:
+      CONNECT_GROUP_ID: local-kafka-connect
+      CONNECT_REST_ADVERTISED_HOST_NAME: kafka-connect
+      CONNECT_CONFIG_STORAGE_TOPIC: local-connector-configs
+      CONNECT_OFFSET_STORAGE_TOPIC: local-connector-offsets
+      CONNECT_STATUS_STORAGE_TOPIC: local-connector-status
+
+      CONNECT_REST_PORT: 8083
+      CONNECT_BOOTSTRAP_SERVERS: kafka:9092
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_KEY_CONVERTER: io.confluent.connect.avro.AvroConverter
+      CONNECT_VALUE_CONVERTER: io.confluent.connect.avro.AvroConverter
+      CONNECT_INTERNAL_KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_INTERNAL_VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_KEY_CONVERTER_SCHEMAS_ENABLE: "true"
+      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "true"
+      CONNECT_KEY_CONVERTER_SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      CONNECT_PLUGIN_PATH: /usr/share/java,/usr/share/confluent-hub-components,/etc/kafka-connect/jars
+      CONNECT_CONFIG_PROVIDERS: 'file'
+      CONNECT_CONFIG_PROVIDERS_FILE_CLASS: org.apache.kafka.common.config.provider.FileConfigProvider
+      CONNECT_TOPIC_CREATION_ENABLE: 'true'
+      CONNECT_PRODUCER_MAX_REQUEST_SIZE: 3145728
+      CONNECT_CONSUMER_MAX_PARTITION_FETCH_BYTES: 3145728
+      CONNECT_PRODUCER_BATCH_SIZE: 200000
+      CONNECT_PRODUCER_LINGER_MS: 200
+      CONNECT_PRODUCER_COMPRESSION_TYPE: "lz4"
+      CONNECT_PRODUCER_ACKS: "1"
+      CONNECT_OFFSET_FLUSH_TIMEOUT_MS: 20000
+      CONNECT_CONNECTOR_CLIENT_CONFIG_OVERRIDE_POLICY: All
+      CONNECT_CONSUMER_MAX_POLL_RECORDS: 700
+
+  ksqldb-cli:
+    image: confluentinc/cp-ksqldb-cli:${CONFLUENT_VERSION}
+    entrypoint: /bin/sh
+    tty: true
+    environment:
+      KSQL_CONFIG_DIR: "/etc/ksqldb"
+      KSQL_LOG4J_OPTS: "-Dlog4j.configuration=file:/opt/ksql-migrations/logging.properties"
+    volumes:
+      - ./ksql:/opt/ksql-migrations
+
+  ksqldb:
+    image: confluentinc/cp-ksqldb-server:${CONFLUENT_VERSION}
+    ports:
+      - "1099:1099"
+    environment:
+      KSQL_CUB_KAFKA_TIMEOUT: 120
+      KSQL_LISTENERS: http://0.0.0.0:8088
+      KSQL_ADVERTISED_LISTENERS: http://ksqldb:8088
+      KSQL_BOOTSTRAP_SERVERS: kafka:9092
+      KSQL_KSQL_CONNECT_URL: http://kafka-connect:8083
+      KSQL_KSQL_SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      KSQL_KSQL_SERVICE_ID: ksql_node_1
+      KSQL_KSQL_QUERY_PULL_METRICS_ENABLED: "true"
+      KSQL_CACHE_MAX_BYTES_BUFFERING: 0
+      # --- Processing log config ---
+      KSQL_KSQL_STREAMS_BOOTSTRAP_SERVERS: kafka:9092
+      KSQL_KSQL_LOGGING_PROCESSING_TOPIC_NAME: my_ksql_01ksql_processing_log
+      KSQL_KSQL_LOGGING_PROCESSING_STREAM_AUTO_CREATE: "true"
+      KSQL_KSQL_LOGGING_PROCESSING_TOPIC_AUTO_CREATE: "true"
+      KSQL_KSQL_STREAMS_PROCESSING_GUARANTEE: "exactly_once"
+      KSQL_KSQL_EXTENSION_DIR: "/opt/ksqldb-udfs"
+      KSQL_OPTS: "-Dksql.streams.auto.offset.reset=earliest"
+      KSQL_JMX_OPTS: >
+        -Djava.rmi.server.hostname=localhost
+        -Dcom.sun.management.jmxremote
+        -Dcom.sun.management.jmxremote.port=1099
+        -Dcom.sun.management.jmxremote.authenticate=false
+        -Dcom.sun.management.jmxremote.ssl=false
+        -Dcom.sun.management.jmxremote.rmi.port=1099
+
+  kafka-ui:
+    container_name: kafka-ui
+    image: provectuslabs/kafka-ui:latest
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local-cluster
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+      KAFKA_CLUSTERS_0_JMXPORT: 9997
+      KAFKA_CLUSTERS_0_SCHEMAREGISTRY: http://schema-registry:8081
+      KAFKA_CLUSTERS_0_KAFKACONNECT_0_NAME: connect-local
+      KAFKA_CLUSTERS_0_KAFKACONNECT_0_ADDRESS: http://kafka-connect:8083
+      KAFKA_CLUSTERS_0_KSQLDBSERVER: http://ksqldb:8088
